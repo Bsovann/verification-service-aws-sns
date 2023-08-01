@@ -1,58 +1,91 @@
-require('dotenv').config();
+
 const express = require('express');
-const bodyParser = require('body-parser');
-const mongoose = require('mongoose');
+const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
+const randomstring = require('randomstring');
+require('dotenv').config();
+
 const app = express();
+app.use(express.json());
+const SNS_TOPIC_ARN = process.env.SNS_TOPIC_ARN;
 
-
-app.use(bodyParser.urlencoded({ extended: true }));
-
-/*
-    RESTFUL BOOKAPI
-
-    1. GET (Retrive) - All books or Single book based on ID. 
-    2. POST (Create) - Add a book to Book Collection. 
-    3. PUT (Replace) - Repace a single book based on ID. 
-    4. PATCH (Modify) - Modify a single book based on ID.
-    5. DELETE (Delete) - Delete a single book based on ID or an entire collection.
- 
-*/
-
-// Connect to mongodb using mongoose
-main().catch(err => console.error(err));
-async function main() {
-    await mongoose.connect('mongodb+srv://bondithsovann:Bos$40160@cluster0.btzxn0s.mongodb.net/Messages');
-}
-// Define Schema 
-const schema = new mongoose.Schema({
-    msgid: String,
-    title: String,
-    number: String,
-    message: String
+const snsClient = new SNSClient({
+    region: 'us-east-1',
+    credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
 });
 
-const Message = new mongoose.model("Message", schema);
+// Replace with your AWS credentials
 
 
-app.get('/', (req, res) => {
+// Store one-time codes and their expiration times in a JavaScript object
+const verificationCodes = {};
 
+const generateCode = () => {
+    return randomstring.generate({ length: 6, charset: 'numeric' });
+};
+
+const cleanupExpiredCodes = () => {
+    setInterval(() => {
+        const currentTime = Math.floor(Date.now() / 1000);
+        for (const code in verificationCodes) {
+            if (verificationCodes[code] < currentTime) {
+                delete verificationCodes[code];
+            }
+        }
+    }, 60000); // Run every minute
+};
+
+// Start the background process to clean up expired codes
+cleanupExpiredCodes();
+
+app.post('/send_verification_code', async (req, res) => {
+    const { phone_number } = req.body;
+    console.log(phone_number);
+
+    if (!phone_number) {
+        return res.status(400).json({ error: 'Phone number is required' });
+    }
+
+    const code = generateCode();
+    const expirationTime = Math.floor(Date.now() / 1000) + 120; // 2 minutes from now
+
+
+    const message = `Your verification code is: ${code}`;
+    const params = {
+        PhoneNumber: phone_number,
+        Message: message,
+    };
+
+    try {
+        await snsClient.send(new PublishCommand(params));
+
+        verificationCodes[code] = expirationTime;
+
+        return res.status(200).json({ message: 'Verification code sent successfully' });
+    } catch (err) {
+        console.error('Error sending verification code:', err);
+        return res.status(500).json({ error: 'Failed to send verification code' });
+    }
 });
 
-// Add Single Message
-app.route('/messages')
-    .post(async function (req, res) {
-        const newMessage = new Message({
-            msgid: req.body.msgid,
-            title: req.body.title,
-            number: req.body.number,
-            message: req.body.message
-        });
-        Message.insertMany([newMessage]);
-        console.log("Successfully Added");
-        res.send("Successfully Sent! We have received!!");
-    });
+app.post('/verify_code', (req, res) => {
+    const { phone_number, code } = req.body;
+    if (!phone_number || !code) {
+        return res.status(400).json({ error: 'Phone number and code are required' });
+    }
 
+    if (verificationCodes[code] && verificationCodes[code] >= Math.floor(Date.now() / 1000)) {
+        delete verificationCodes[code];
+        return res.status(200).json({ message: 'Verification successful' });
+    } else {
+        delete verificationCodes[code];
+        return res.status(400).json({ error: 'Invalid verification code or code has expired' });
+    }
+});
 
-app.listen(3000, function () {
-    console.log('listening on port 3000');
-})
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`Server running on port ${port}`);
+});
