@@ -1,6 +1,5 @@
-
 const express = require('express');
-const { SNSClient, PublishCommand } = require('@aws-sdk/client-sns');
+const { SNSClient, PublishCommand, SNSException } = require('@aws-sdk/client-sns');
 const randomstring = require('randomstring');
 require('dotenv').config();
 
@@ -15,9 +14,6 @@ const snsClient = new SNSClient({
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     },
 });
-
-// Replace with your AWS credentials
-
 
 // Store one-time codes and their expiration times in a JavaScript object
 const verificationCodes = {};
@@ -51,7 +47,6 @@ app.post('/send_verification_code', async (req, res) => {
     const code = generateCode();
     const expirationTime = Math.floor(Date.now() / 1000) + 120; // 2 minutes from now
 
-
     const message = `Your verification code is: ${code}`;
     const params = {
         PhoneNumber: phone_number,
@@ -65,7 +60,11 @@ app.post('/send_verification_code', async (req, res) => {
 
         return res.status(200).json({ message: 'Verification code sent successfully' });
     } catch (err) {
-        console.error('Error sending verification code:', err);
+        if (err instanceof SNSException) {
+            console.error('SNSException:', err.message);
+        } else {
+            console.error('Error sending verification code:', err);
+        }
         return res.status(500).json({ error: 'Failed to send verification code' });
     }
 });
